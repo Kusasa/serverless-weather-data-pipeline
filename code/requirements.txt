@@ -1,0 +1,7 @@
+requests
+boto3
+datetime
+urllib3==1.26.6
+sqlalchemy
+psycopg2-binary==2.9.10
+psycopg2

@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for serverless weather pipeline
+
+Resources:
+  # VPC
+  ServerlessWeatherPipelineVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties: 
+      CidrBlock: '172.18.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: 
+        - Key: Name
+          Value: serverless-weather-pipeline
+
+  # Internet Gateway
+  ServerlessWeatherPipelineInternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: serverless-weather-pipeline-igw
+
+  # Attach Internet Gateway
+  AttachGateway:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties: 
+      VpcId: !Ref ServerlessWeatherPipelineVPC
+      InternetGatewayId: !Ref ServerlessWeatherPipelineInternetGateway
+
+  # Subnets
+  ServerlessWeatherPipelineSubnet01:
+    Type: 'AWS::EC2::Subnet'
+    Properties: 
+      VpcId: !Ref ServerlessWeatherPipelineVPC
+      CidrBlock: '172.18.0.0/24'
+      AvailabilityZone: 'us-east-1a'
+      Tags: 
+        - Key: Name
+          Value: serverless-weather-pipeline-subnet-01
+
+  ServerlessWeatherPipelineSubnet02:
+    Type: 'AWS::EC2::Subnet'
+    Properties: 
+      VpcId: !Ref ServerlessWeatherPipelineVPC
+      CidrBlock: '172.18.1.0/24'
+      AvailabilityZone: 'us-east-1b'
+      Tags: 
+        - Key: Name
+          Value: serverless-weather-pipeline-subnet-02
+
+  ServerlessWeatherPipelineSubnet03:
+    Type: 'AWS::EC2::Subnet'
+    Properties: 
+      VpcId: !Ref ServerlessWeatherPipelineVPC
+      CidrBlock: '172.18.2.0/24'
+      AvailabilityZone: 'us-east-1c'
+      Tags: 
+        - Key: Name
+          Value: serverless-weather-pipeline-subnet-03
+
+  # Route Table
+  ServerlessWeatherPipelineRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties: 
+      VpcId: !Ref ServerlessWeatherPipelineVPC
+      Tags: 
+        - Key: Name
+          Value: serverless-weather-pipeline-rt
+
+  # Public Route
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    Properties: 
+      RouteTableId: !Ref ServerlessWeatherPipelineRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref ServerlessWeatherPipelineInternetGateway
+
+  # Route Table Associations
+  SubnetRouteTableAssociation01:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties: 
+      RouteTableId: !Ref ServerlessWeatherPipelineRouteTable
+      SubnetId: !Ref ServerlessWeatherPipelineSubnet01
+
+  SubnetRouteTableAssociation02:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties: 
+      RouteTableId: !Ref ServerlessWeatherPipelineRouteTable
+      SubnetId: !Ref ServerlessWeatherPipelineSubnet02
+
+  SubnetRouteTableAssociation03:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties: 
+      RouteTableId: !Ref ServerlessWeatherPipelineRouteTable
+      SubnetId: !Ref ServerlessWeatherPipelineSubnet03
+
+  # Security Group
+  ServerlessWeatherPipelineSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties: 
+      GroupDescription: 'Allows PostgreSQL access from any public IP'
+      VpcId: !Ref ServerlessWeatherPipelineVPC
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          CidrIp: '0.0.0.0/0'
+      SecurityGroupEgress: 
+        - IpProtocol: tcp
+          CidrIp: '0.0.0.0/0'
+      Tags: 
+        - Key: Name
+          Value: serverless-weather-pipeline-sg
+
+  # DB Subnet Group 
+  ServerlessWeatherPipelineDBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group for serverless weather pipeline'
+      SubnetIds:
+        - !Ref ServerlessWeatherPipelineSubnet01
+        - !Ref ServerlessWeatherPipelineSubnet02
+        - !Ref ServerlessWeatherPipelineSubnet03
+      DBSubnetGroupName: 'serverless-weather-pipeline-db-subnet-group'
+      Tags:
+        - Key: Name
+          Value: serverless-weather-pipeline-db-subnet-group
+
+Outputs:
+  SecurityGroupID:
+    Description: 'Security Group ID'
+    Value: !Ref ServerlessWeatherPipelineSG
+    Export:
+      Name: SecurityGroupID
+  ServerlessWeatherPipelineSubnet01ID:
+    Description: 'Subnet 01 ID'
+    Value: !Ref ServerlessWeatherPipelineSubnet01
+    Export:
+      Name: ServerlessWeatherPipelineSubnet01ID
+  ServerlessWeatherPipelineSubnet02ID:
+    Description: 'Subnet 02 ID'
+    Value: !Ref ServerlessWeatherPipelineSubnet02
+    Export:
+      Name: ServerlessWeatherPipelineSubnet02ID
+  ServerlessWeatherPipelineSubnet03ID:
+    Description: 'Subnet 03 ID'
+    Value: !Ref ServerlessWeatherPipelineSubnet03
+    Export:
+      Name: ServerlessWeatherPipelineSubnet03ID

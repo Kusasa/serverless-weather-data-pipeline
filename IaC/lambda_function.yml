@@ -1,0 +1,234 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to deploy Lambda functions with CloudWatch Events and S3 triggers
+Parameters:
+  ServerlessWeatherPipelineSubnet01:
+    Description: "Name of the first subnet"
+    Type: "String"
+  ServerlessWeatherPipelineSubnet02:
+    Description: "Name of the second subnet"
+    Type: "String"
+  ServerlessWeatherPipelineSubnet03:
+    Description: "Name of the third subnet"
+    Type: "String"
+  ServerlessWeatherPipelineSG:
+    Description: "Name of the Security Group"
+    Type: "String"
+Resources:
+  # IAM Role for Lambda functions
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'LambdaExecutionPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: 'resourcesGlobally'
+                Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 'sns:Publish'
+                  - 'lambda:InvokeFunction'
+                  - 'ec2:CreateNetworkInterface'
+                  - 'ec2:DescribeNetworkInterfaces'
+                  - 'ec2:DeleteNetworkInterface'
+                  - 's3:ListAccessPointsForObjectLambda'
+                  - 's3:GetAccessPoint'
+                  - 's3:PutAccountPublicAccessBlock'
+                  - 's3:ListAccessPoints'
+                  - 's3:CreateStorageLensGroup'
+                  - 's3:ListJobs'
+                  - 's3:PutStorageLensConfiguration'
+                  - 's3:ListMultiRegionAccessPoints'
+                  - 's3:ListStorageLensGroups'
+                  - 's3:ListStorageLensConfigurations'
+                  - 's3:GetAccountPublicAccessBlock'
+                  - 's3:ListAllMyBuckets'
+                  - 's3:ListAccessGrantsInstances'
+                  - 's3:PutAccessPointPublicAccessBlock'
+                  - 's3:CreateJob'
+                  - 's3:PutObject'
+                  - 's3:GetObject'
+                Resource: '*'
+              - Sid: 'bucketAndLogs'
+                Effect: 'Allow'
+                Action:
+                  - 's3:*'
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - 'arn:aws:s3:::aw-weather-data'
+                  - 'arn:aws:logs:us-east-1:008971661443:*'
+
+  # Lambda Function - data_fetcher.py
+  DataFetcherLambda:
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+      - DependenciesLayer
+      - ErrorHandlerLambda
+    Properties:
+      FunctionName: "data-fetcher-function"
+      Handler: 'data_fetcher.lambda_handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: 'aw-weather-functions'
+        S3Key: 'data_fetcher.zip'
+      Runtime: 'python3.8'
+      Timeout: 300
+      Layers:
+        - !Ref DependenciesLayer
+      Environment:
+        Variables:
+          ERROR_HANDLER_ARN: !GetAtt ErrorHandlerLambda.Arn
+
+  # EventInvokeConfig for DataFetcherLambda
+  DataFetcherLambdaInvokeConfig:
+    Type: 'AWS::Lambda::EventInvokeConfig'
+    Properties:
+      FunctionName: !Ref DataFetcherLambda
+      Qualifier: '$LATEST'
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt ErrorHandlerLambda.Arn
+
+  # CloudWatch Event Rule for data_fetcher.py
+  DataFetcherSchedule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      ScheduleExpression: 'rate(1 hour)'
+      Targets:
+        - Arn: !GetAtt DataFetcherLambda.Arn
+          Id: 'DataFetcherLambdaTarget'
+
+  # CloudWatch Event Permission for Lambda
+  DataFetcherLambdaPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt DataFetcherLambda.Arn
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt DataFetcherSchedule.Arn
+
+  # Lambda Function - data_processor.py
+  DataProcessorLambda:
+    Type: 'AWS::Lambda::Function'
+    DependsOn: 
+      - ErrorHandlerLambda
+      - DependenciesLayer
+    Properties:
+      FunctionName: "data-processor-function"
+      Handler: 'data_processor.lambda_handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: 'aw-weather-functions'
+        S3Key: 'data_processor.zip'
+      Runtime: 'python3.8'
+      Timeout: 300
+      Layers:
+        - !Ref DependenciesLayer
+        - 'arn:aws:lambda:us-east-1:898466741470:layer:psycopg2-py38:2'
+      Environment:
+        Variables:
+          ERROR_HANDLER_ARN: !GetAtt ErrorHandlerLambda.Arn
+
+  # EventInvokeConfig for DataProcessorLambda
+  DataProcessorLambdaInvokeConfig:
+    Type: 'AWS::Lambda::EventInvokeConfig'
+    Properties:
+      FunctionName: !Ref DataProcessorLambda
+      Qualifier: '$LATEST'
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt ErrorHandlerLambda.Arn
+
+  # S3 Bucket Notification for data_processor.py
+  DataProcessorS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'aw-weather-data'
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt DataProcessorLambda.Arn
+
+  # S3 Bucket Permission for Lambda
+  DataProcessorLambdaPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt DataProcessorLambda.Arn
+      Principal: 's3.amazonaws.com'
+      SourceArn: 'arn:aws:s3:::aw-weather-data'
+
+  # Lambda Function - error_handler.py
+  ErrorHandlerLambda:
+    Type: 'AWS::Lambda::Function'
+    DependsOn: DependenciesLayer
+    Properties:
+      FunctionName: "error-handler-function"
+      Handler: 'error_handler.lambda_handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: 'aw-weather-functions'
+        S3Key: 'error_handler.zip'
+      Runtime: 'python3.8'
+      Timeout: 300
+      Layers:
+        - !Ref DependenciesLayer
+
+  # CloudWatch Alarm for data_fetcher.py
+  DataFetcherErrorAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: 'DataFetcherErrorAlarm'
+      MetricName: 'Errors'
+      Namespace: 'AWS/Lambda'
+      Dimensions:
+        - Name: 'FunctionName'
+          Value: !Ref DataFetcherLambda
+      Statistic: 'Sum'
+      Period: '300'
+      EvaluationPeriods: '1'
+      Threshold: '1'
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      AlarmActions:
+        - !GetAtt ErrorHandlerLambda.Arn
+
+  # CloudWatch Alarm for data_processor.py
+  DataProcessorErrorAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: 'DataProcessorErrorAlarm'
+      MetricName: 'Errors'
+      Namespace: 'AWS/Lambda'
+      Dimensions:
+        - Name: 'FunctionName'
+          Value: !Ref DataProcessorLambda
+      Statistic: 'Sum'
+      Period: '300'
+      EvaluationPeriods: '1'
+      Threshold: '1'
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      AlarmActions:
+        - !GetAtt ErrorHandlerLambda.Arn
+
+  # Dependencies Layer
+  DependenciesLayer:
+    Type: "AWS::Lambda::LayerVersion"
+    Properties:
+      LayerName: "dependencies_layer"
+      Content: 
+        S3Bucket: "aw-weather-functions"
+        S3Key: "dependencies_layer.zip"
+      CompatibleRuntimes: 
+        - "python3.8"
